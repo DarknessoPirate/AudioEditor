@@ -1,6 +1,6 @@
 import sys
-import soundfile as sf
-import sounddevice as sd
+from pydub import AudioSegment
+from pydub.playback import play
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -9,21 +9,20 @@ from PySide6.QtWidgets import (
     QPushButton,
     QLabel,
     QFileDialog,
+    QSlider,
 )
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 
 
 class PlaybackThread(QThread):
     finished = Signal()
 
-    def __init__(self, data, samplerate):
+    def __init__(self, audio):
         super().__init__()
-        self.data = data
-        self.samplerate = samplerate
+        self.audio = audio
 
     def run(self):
-        sd.play(self.data, self.samplerate)
-        sd.wait()
+        play(self.audio)
         self.finished.emit()
 
 
@@ -31,8 +30,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Audio Editor Template")
-        self.audio_data = None
-        self.samplerate = None
+        self.audio = None
         self.thread = None
 
         layout = QVBoxLayout()
@@ -49,6 +47,17 @@ class MainWindow(QMainWindow):
         self.play_btn.setEnabled(False)
         layout.addWidget(self.play_btn)
 
+        self.volume_label = QLabel("Volume: 100%")
+        layout.addWidget(self.volume_label)
+
+        self.volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.volume_slider.setRange(0, 150)
+        self.volume_slider.setValue(100)
+        self.volume_slider.valueChanged.connect(
+            lambda v: self.volume_label.setText(f"Volume: {v}%")
+        )
+        layout.addWidget(self.volume_slider)
+
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
@@ -59,23 +68,31 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
-        self.audio_data, self.samplerate = sf.read(path)
-        duration = len(self.audio_data) / self.samplerate
-        channels = 1 if self.audio_data.ndim == 1 else self.audio_data.shape[1]
+        self.audio = AudioSegment.from_file(path)
+        duration = len(self.audio) / 1000.0
+        channels = self.audio.channels
+        samplerate = self.audio.frame_rate
+
         self.info_label.setText(
             f"Loaded: {path.split('/')[-1]}\n"
             f"Duration: {duration:.2f}s | "
             f"Channels: {channels} | "
-            f"Sample rate: {self.samplerate}Hz"
+            f"Sample rate: {samplerate}Hz"
         )
         self.play_btn.setEnabled(True)
 
     def play_audio(self):
-        if self.audio_data is None:
+        if self.audio is None:
             return
+        volume = self.volume_slider.value()
+        import math
+        db_change = 20 * math.log10(volume / 100) if volume > 0 else -120
+        audio = self.audio + db_change
         self.play_btn.setEnabled(False)
-        self.thread = PlaybackThread(self.audio_data, self.samplerate)
+        self.volume_slider.setEnabled(False)
+        self.thread = PlaybackThread(audio)
         self.thread.finished.connect(lambda: self.play_btn.setEnabled(True))
+        self.thread.finished.connect(lambda: self.volume_slider.setEnabled(True))
         self.thread.start()
 
 
