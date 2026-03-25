@@ -65,10 +65,22 @@ class MainWindow(QMainWindow):
         ])
         layout.addWidget(self.quality_combo)
 
+        self.export_btn = getButton("Export Audio", lambda: self.export_to(self.format_combo.currentData()))
+        self.export_btn.setEnabled(False)
+        self.format_combo = getComboBox([
+            ("WAV", "wav"),
+            ("MP3", "mp3"),
+            ("OGG", "ogg"),
+            ("FLAC", "flac"),
+        ])
+        export_layout = QHBoxLayout()
+        export_layout.addWidget(self.export_btn)
+        export_layout.addWidget(self.format_combo)
+        layout.addLayout(export_layout)
+
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
-
 
     def load_file(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -90,6 +102,21 @@ class MainWindow(QMainWindow):
             f"Sample rate: {samplerate}Hz"
         )
         self.play_btn.setEnabled(True)
+        self.export_btn.setEnabled(True)
+
+    def export_to(self, fmt: str):
+        if self.audio is None:
+            return
+        filter_map = {"wav": "WAV (*.wav)", "mp3": "MP3 (*.mp3)", "ogg": "OGG (*.ogg)", "flac": "FLAC (*.flac)"}
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Audio", "", filter_map.get(fmt, "WAV (*.wav)")
+        )
+        if not path:
+            return
+        if not path.lower().endswith(f".{fmt}"):
+            path = f"{path}.{fmt}"
+        audio = self.apply_effects_to_audio()
+        audio.export(path, format=fmt)
 
     def play_audio(self):
         if self.audio is None:
