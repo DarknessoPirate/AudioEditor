@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import QSlider, QRadioButton, QButtonGroup, QComboBox, QPushButton
 from PySide6.QtCore import Qt
+import matplotlib.pyplot as plt
 from typing import Callable
 
 def getSlider(range: tuple[int, int], default_val: int) -> QSlider:
@@ -25,3 +26,13 @@ def getComboBox(combo_data: list[tuple[str, int]]) -> QComboBox:
         combo.addItem(data[0], data[1])
     combo.setCurrentIndex(0)
     return combo
+
+def getLoudnessPlot(x_data, y_data):
+    plt.figure("Loudness")
+    plt.clf()
+    plt.plot(x_data, y_data)
+    plt.xlabel("Time (s)")
+    plt.ylabel("Loudness (%)")
+    plt.title("Loudness over time")
+    plt.tight_layout()
+    plt.pause(0.001)

@@ -1,7 +1,7 @@
 import math
 from pydub import AudioSegment
 from PySide6.QtWidgets import (
-    QMainWindow, 
+    QMainWindow,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QRadioButton,
 )
-from ui.components import getSlider, getButton, getRadioButtonsGroup, getComboBox
+from ui.components import getSlider, getButton, getRadioButtonsGroup, getComboBox, getLoudnessPlot
 from playback import PlaybackThread
 
 class MainWindow(QMainWindow):
@@ -43,6 +43,12 @@ class MainWindow(QMainWindow):
             lambda v: self.volume_label.setText(f"Volume: {v}%")
         )
         layout.addWidget(self.volume_slider)
+
+        self.pan_label = QLabel("Pan: Center")
+        layout.addWidget(self.pan_label)
+        self.pan_slider = getSlider((-100, 100), 0)
+        self.pan_slider.valueChanged.connect(self.on_pan_changed)
+        layout.addWidget(self.pan_slider)
 
         self.reverse_checkbox = QCheckBox("Play in reverse")
         layout.addWidget(self.reverse_checkbox)
@@ -101,6 +107,14 @@ class MainWindow(QMainWindow):
             f"Channels: {channels} | "
             f"Sample rate: {samplerate}Hz"
         )
+
+        self.volume_slider.setValue(100)
+        self.pan_slider.setValue(0)
+        self.reverse_checkbox.setChecked(False)
+        self.stereo_radio.setChecked(True)
+        self.quality_combo.setCurrentIndex(0)
+        self.format_combo.setCurrentIndex(0)
+        self.update_loudness_plot(self.audio)
         self.play_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
 
@@ -123,10 +137,13 @@ class MainWindow(QMainWindow):
             return
 
         audio = self.apply_effects_to_audio()
+        
+        self.update_loudness_plot(audio)
 
         self.play_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.volume_slider.setEnabled(False)
+        self.pan_slider.setEnabled(False)
         self.reverse_checkbox.setEnabled(False)
         self.stereo_radio.setEnabled(False)
         self.mono_radio.setEnabled(False)
@@ -135,11 +152,31 @@ class MainWindow(QMainWindow):
         self.thread.finished.connect(lambda: self.play_btn.setEnabled(True))
         self.thread.finished.connect(lambda: self.stop_btn.setEnabled(False))
         self.thread.finished.connect(lambda: self.volume_slider.setEnabled(True))
+        self.thread.finished.connect(lambda: self.pan_slider.setEnabled(True))
         self.thread.finished.connect(lambda: self.reverse_checkbox.setEnabled(True))
         self.thread.finished.connect(lambda: self.stereo_radio.setEnabled(True))
         self.thread.finished.connect(lambda: self.mono_radio.setEnabled(True))
         self.thread.finished.connect(lambda: self.quality_combo.setEnabled(True))
         self.thread.start()
+
+    def update_loudness_plot(self, audio):
+        # get rms value every 100ms of the audio
+        rms_values = [fragment.rms for fragment in audio[::100]]
+        max_rms = max(rms_values) or 1
+
+        rms_values_percentages = [v / max_rms * 100 for v in rms_values]
+        seconds = [i * 0.1 for i in range(len(rms_values_percentages))]
+
+        getLoudnessPlot(seconds, rms_values_percentages)
+       
+
+    def on_pan_changed(self, v):
+        if v == 0:
+            self.pan_label.setText("Pan: Center")
+        elif v > 0:
+            self.pan_label.setText(f"Pan: R{v}%")
+        else:
+            self.pan_label.setText(f"Pan: L{abs(v)}%")
 
     def stop_audio(self):
         if self.thread:
@@ -157,6 +194,9 @@ class MainWindow(QMainWindow):
         framerate = self.quality_combo.currentData()
         if framerate is not None:
             audio = audio.set_frame_rate(framerate)
+        pan = self.pan_slider.value() / 100
+        if pan != 0 and channels == 2:
+            audio = audio.pan(pan)
         if self.reverse_checkbox.isChecked():
             audio = audio.reverse()
         return audio
