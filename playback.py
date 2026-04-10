@@ -3,24 +3,36 @@ import tempfile
 from PySide6.QtCore import QThread, Signal
 from pydub.utils import get_player_name
 
+# Odtwarza dźwięk w osobnym wątku, żeby interfejs użytkownika nie blokował się podczas odtwarzania.
 class PlaybackThread(QThread):
+    # Sygnał emitowany po zakończeniu odtwarzania (naturalnym lub przez stop()).
     finished = Signal()
 
     def __init__(self, audio):
         super().__init__()
-        self.audio = audio
-        self._process = None
+        self.audio = audio # przekazujemy plik typu AudioSegment z biblioteki PyDub
+        self.process = None  # przechowuje podproces ffplay podczas odtwarzania
 
     def run(self):
-        # it exports pydub audio segment to temp file on disk so ffplay can play the audio from file and manage it
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        
+        # Tworzymy tymczasowy plik .wav na dysku. delete=True usunie plik po zakończeniu procesu.
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as f:
+
+            # Wczytany plik audio eksportujemy do wcześniej utworzonego tymczasowego pliku
             self.audio.export(f.name, format="wav")
-            self._process = subprocess.Popen(
+
+            # Popen uruchamia zewnętrzny program jako osobny proces i jest równoznaczne z wpisaniem w terminalu komendy:
+            # {get_player_name()} -nodisp -autoexit -hide_banner {f.name}.wav, gdzie:
+            # get_player_name() zwraca ścieżkę do pliku wykonywalnego ffplay w systemie.
+            # f.name to nazwa wczytanego pliku
+            # -nodisp: brak okna wideo, -autoexit: wyjście po zakończeniu, -hide_banner: ukrywa informacje o wersji.
+            self.process = subprocess.Popen(
                 [get_player_name(), "-nodisp", "-autoexit", "-hide_banner", f.name]
             )
-            self._process.wait()
+            self.process.wait()  # blokuje wątek do momentu zakończenia ffplay
         self.finished.emit()
 
     def stop(self):
-        if self._process:
-            self._process.terminate()
+        # Kończy proces ffplay przed czasem (np. gdy użytkownik kliknie Stop).
+        if self.process:
+            self.process.terminate()

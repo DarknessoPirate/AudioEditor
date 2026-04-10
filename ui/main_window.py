@@ -13,12 +13,13 @@ from PySide6.QtWidgets import (
 from ui.components import getSlider, getButton, getRadioButtonsGroup, getComboBox, getLoudnessPlot
 from playback import PlaybackThread
 
+# Główne okno aplikacji — zawiera cały interfejs użytkownika i logikę sterowania odtwarzaniem.
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Audio Editor Template")
-        self.audio = None
-        self.thread = None
+        self.audio = None   # załadowany plik audio jako obiekt AudioSegment
+        self.thread = None  # aktywny wątek odtwarzania (PlaybackThread)
 
         layout = QVBoxLayout()
 
@@ -26,6 +27,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.info_label)
         layout.addWidget(getButton("Load Audio File", self.load_file))
 
+        # Przyciski Play/Stop — domyślnie nieaktywne do momentu załadowania pliku.
         self.play_btn = getButton("Play", self.play_audio)
         self.play_btn.setEnabled(False)
         layout.addWidget(self.play_btn)
@@ -34,6 +36,7 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(False)
         layout.addWidget(self.stop_btn)
 
+        # Suwak głośności w zakresie 0–150% (wartość domyślna: 100%).
         self.volume_label = QLabel("Volume: 100%")
         layout.addWidget(self.volume_label)
         slider_range = (0, 150)
@@ -44,6 +47,7 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self.volume_slider)
 
+        # Suwak panoramy (pan) w zakresie -100 (lewo) do 100 (prawo), 0 = środek.
         self.pan_label = QLabel("Pan: Center")
         layout.addWidget(self.pan_label)
         self.pan_slider = getSlider((-100, 100), 0)
@@ -53,6 +57,7 @@ class MainWindow(QMainWindow):
         self.reverse_checkbox = QCheckBox("Play in reverse")
         layout.addWidget(self.reverse_checkbox)
 
+        # Grupa przycisków do wyboru trybu kanałów — stereo lub mono.
         self.stereo_radio = QRadioButton("Stereo")
         self.mono_radio = QRadioButton("Mono")
         self.stereo_radio.setChecked(True)
@@ -62,6 +67,8 @@ class MainWindow(QMainWindow):
         channel_layout.addWidget(self.mono_radio)
         layout.addLayout(channel_layout)
 
+        # Lista rozwijana do wyboru jakości dźwięku (częstotliwość próbkowania w Hz).
+        # Niższa częstotliwość = gorsza jakość, mniejszy rozmiar pliku.
         layout.addWidget(QLabel("Sound quality"))
         self.quality_combo = getComboBox([
             ("Default", None),
@@ -71,6 +78,7 @@ class MainWindow(QMainWindow):
         ])
         layout.addWidget(self.quality_combo)
 
+        # Przycisk eksportu i lista wyboru formatu pliku wyjściowego.
         self.export_btn = getButton("Export Audio", lambda: self.export_to(self.format_combo.currentData()))
         self.export_btn.setEnabled(False)
         self.format_combo = getComboBox([
@@ -84,20 +92,25 @@ class MainWindow(QMainWindow):
         export_layout.addWidget(self.format_combo)
         layout.addLayout(export_layout)
 
+        # Qt wymaga osadzenia layoutu w widgecie — ustawiamy go jako centralny widget okna.
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
 
     def load_file(self):
+        # Otwieramy dialog wyboru pliku — filtrujemy tylko obsługiwane formaty audio.
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Audio", "", "Audio Files (*.mp3 *.wav *.ogg *.flac)"
         )
         if not path:
             return
+
         self.audio = AudioSegment.from_file(path)
-        duration = len(self.audio) / 1000.0
+
+        duration = len(self.audio) / 1000.0  # pydub zwraca długość w milisekundach, przeliczamy na sekundy
         channels = self.audio.channels
         samplerate = self.audio.frame_rate
+        # Aktualizujemy pierwszą opcję listy jakości, żeby pokazywała oryginalną częstotliwość pliku.
         self.quality_combo.setItemText(0, f"Default ({samplerate} Hz)")
         self.quality_combo.setItemData(0, samplerate)
 
@@ -108,6 +121,7 @@ class MainWindow(QMainWindow):
             f"Sample rate: {samplerate}Hz"
         )
 
+        # Resetujemy wszystkie kontrolki do wartości domyślnych przy każdym załadowaniu pliku.
         self.volume_slider.setValue(100)
         self.pan_slider.setValue(0)
         self.reverse_checkbox.setChecked(False)
@@ -127,6 +141,7 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        # Upewniamy się, że plik ma poprawne rozszerzenie — dopisujemy je jeśli brakuje.
         if not path.lower().endswith(f".{fmt}"):
             path = f"{path}.{fmt}"
         audio = self.apply_effects_to_audio()
@@ -137,9 +152,10 @@ class MainWindow(QMainWindow):
             return
 
         audio = self.apply_effects_to_audio()
-        
+
         self.update_loudness_plot(audio)
 
+        # Blokujemy kontrolki na czas odtwarzania, żeby użytkownik nie zmieniał parametrów w trakcie.
         self.play_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.volume_slider.setEnabled(False)
@@ -148,7 +164,14 @@ class MainWindow(QMainWindow):
         self.stereo_radio.setEnabled(False)
         self.mono_radio.setEnabled(False)
         self.quality_combo.setEnabled(False)
+
+        # Biblioteka PyDub posiada wbudowaną funkcję play(), ale w kontekście aplikacji graficznych są dwa problemy:
+        # - play() jest funkcją synchroniczną (blokuje główny wątek, czyli okno aplikacji)
+        # - play() nie da się zatrzymać w trakcie odtwarzania
+        # Dlatego używamy własnego PlaybackThread opartego na ffplay.
         self.thread = PlaybackThread(audio)
+
+        # Po zakończeniu odtwarzania, sygnał finished odblokowuje wszystkie kontrolki z powrotem.
         self.thread.finished.connect(lambda: self.play_btn.setEnabled(True))
         self.thread.finished.connect(lambda: self.stop_btn.setEnabled(False))
         self.thread.finished.connect(lambda: self.volume_slider.setEnabled(True))
@@ -160,17 +183,19 @@ class MainWindow(QMainWindow):
         self.thread.start()
 
     def update_loudness_plot(self, audio):
-        # get rms value every 100ms of the audio
+        # Pobieramy wartość RMS (głośność) co 100ms — RMS to miara efektywnej głośności sygnału audio.
         rms_values = [fragment.rms for fragment in audio[::100]]
-        max_rms = max(rms_values) or 1
+        max_rms = max(rms_values) or 1  # Zabezpieczenie przed dzieleniem przez zero dla cichych plików
 
-        rms_values_percentages = [v / max_rms * 100 for v in rms_values]
+        # Normalizujemy wartości RMS do zakresu 0–100%, żeby wykres był czytelny niezależnie od głośności pliku.
+        rms_values_percentages = [rms / max_rms * 100 for rms in rms_values]
         seconds = [i * 0.1 for i in range(len(rms_values_percentages))]
 
         getLoudnessPlot(seconds, rms_values_percentages)
-       
+
 
     def on_pan_changed(self, v):
+        # Aktualizujemy etykietę panoramy — pokazujemy kierunek (L/R) i wartość procentową.
         if v == 0:
             self.pan_label.setText("Pan: Center")
         elif v > 0:
@@ -185,7 +210,8 @@ class MainWindow(QMainWindow):
     def apply_effects_to_audio(self) -> AudioSegment:
         volume = self.volume_slider.value()
 
-        # logarithmic volume scaling
+        # Głośność skalujemy logarytmicznie (w decybelach), bo ludzkie ucho postrzega dźwięk logarytmicznie.
+        # Wzór: dB = 20 * log10(volume / 100). Dla volume=0 ustawiamy -120 dB (praktyczna cisza).
         dB_change = 20 * math.log10(volume / 100) if volume > 0 else -120
 
         audio = self.audio + dB_change
@@ -194,6 +220,8 @@ class MainWindow(QMainWindow):
         framerate = self.quality_combo.currentData()
         if framerate is not None:
             audio = audio.set_frame_rate(framerate)
+            
+        # Panorama działa tylko dla stereo — w mono oba kanały są identyczne, więc pan nie ma sensu.
         pan = self.pan_slider.value() / 100
         if pan != 0 and channels == 2:
             audio = audio.pan(pan)
