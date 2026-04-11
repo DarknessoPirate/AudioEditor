@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
 
-        self.audio = AudioSegment.from_file(path)
+        self.audio: AudioSegment = AudioSegment.from_file(path)
 
         duration = len(self.audio) / 1000.0  # pydub zwraca długość w milisekundach, przeliczamy na sekundy
         channels = self.audio.channels
