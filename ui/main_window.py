@@ -57,6 +57,19 @@ class MainWindow(QMainWindow):
         self.reverse_checkbox = QCheckBox("Play in reverse")
         layout.addWidget(self.reverse_checkbox)
 
+        # Suwaki przycinania — zakres ustawiany dynamicznie po załadowaniu pliku (w milisekundach).
+        self.trim_start_label = QLabel("Trim start: 0.0s")
+        layout.addWidget(self.trim_start_label)
+        self.trim_start_slider = getSlider((0, 1000), 0)
+        self.trim_start_slider.valueChanged.connect(self.on_trim_start_changed)
+        layout.addWidget(self.trim_start_slider)
+
+        self.trim_end_label = QLabel("Trim end: 0.0s")
+        layout.addWidget(self.trim_end_label)
+        self.trim_end_slider = getSlider((0, 1000), 1000)
+        self.trim_end_slider.valueChanged.connect(self.on_trim_end_changed)
+        layout.addWidget(self.trim_end_slider)
+
         # Grupa przycisków do wyboru trybu kanałów — stereo lub mono.
         self.stereo_radio = QRadioButton("Stereo")
         self.mono_radio = QRadioButton("Mono")
@@ -128,6 +141,15 @@ class MainWindow(QMainWindow):
         self.stereo_radio.setChecked(True)
         self.quality_combo.setCurrentIndex(0)
         self.format_combo.setCurrentIndex(0)
+
+        # Ustawiamy zakres suwaków trim na podstawie długości załadowanego pliku (w ms).
+        duration_ms = len(self.audio)
+        self.trim_start_slider.setRange(0, duration_ms)
+        self.trim_start_slider.setValue(0)
+        self.trim_end_slider.setRange(0, duration_ms)
+        self.trim_end_slider.setValue(duration_ms)
+        self.trim_start_label.setText("Trim start: 0.0s")
+        self.trim_end_label.setText(f"Trim end: {duration:.2f}s")
         self.update_loudness_plot(self.audio)
         self.play_btn.setEnabled(True)
         self.export_btn.setEnabled(True)
@@ -164,6 +186,8 @@ class MainWindow(QMainWindow):
         self.stereo_radio.setEnabled(False)
         self.mono_radio.setEnabled(False)
         self.quality_combo.setEnabled(False)
+        self.trim_start_slider.setEnabled(False)
+        self.trim_end_slider.setEnabled(False)
 
         # Biblioteka PyDub posiada wbudowaną funkcję play(), ale w kontekście aplikacji graficznych są dwa problemy:
         # - play() jest funkcją synchroniczną (blokuje główny wątek, czyli okno aplikacji)
@@ -180,6 +204,8 @@ class MainWindow(QMainWindow):
         self.thread.finished.connect(lambda: self.stereo_radio.setEnabled(True))
         self.thread.finished.connect(lambda: self.mono_radio.setEnabled(True))
         self.thread.finished.connect(lambda: self.quality_combo.setEnabled(True))
+        self.thread.finished.connect(lambda: self.trim_start_slider.setEnabled(True))
+        self.thread.finished.connect(lambda: self.trim_end_slider.setEnabled(True))
         self.thread.start()
 
     def update_loudness_plot(self, audio):
@@ -193,6 +219,26 @@ class MainWindow(QMainWindow):
 
         getLoudnessPlot(seconds, rms_values_percentages)
 
+
+    def on_trim_start_changed(self, v):
+        # Suwak startu nie może przekroczyć suwaka końca — cofamy go jeśli zajdzie za daleko.
+        end_ms = self.trim_end_slider.value()
+        if v >= end_ms:
+            self.trim_start_slider.blockSignals(True)
+            self.trim_start_slider.setValue(max(end_ms - 100, 0))
+            self.trim_start_slider.blockSignals(False)
+            v = self.trim_start_slider.value()
+        self.trim_start_label.setText(f"Trim start: {v / 1000:.2f}s")
+
+    def on_trim_end_changed(self, v):
+        # Suwak końca nie może cofnąć się za suwak startu — przesuwamy go do przodu jeśli zajdzie za daleko.
+        start_ms = self.trim_start_slider.value()
+        if v <= start_ms:
+            self.trim_end_slider.blockSignals(True)
+            self.trim_end_slider.setValue(min(start_ms + 100, self.trim_end_slider.maximum()))
+            self.trim_end_slider.blockSignals(False)
+            v = self.trim_end_slider.value()
+        self.trim_end_label.setText(f"Trim end: {v / 1000:.2f}s")
 
     def on_pan_changed(self, v):
         # Aktualizujemy etykietę panoramy — pokazujemy kierunek (L/R) i wartość procentową.
@@ -210,11 +256,16 @@ class MainWindow(QMainWindow):
     def apply_effects_to_audio(self) -> AudioSegment:
         volume = self.volume_slider.value()
 
+        # Przycinamy audio do wybranego przez użytkownika zakresu — pydub obsługuje slice w milisekundach.
+        start_ms = self.trim_start_slider.value()
+        end_ms = self.trim_end_slider.value()
+        audio = self.audio[start_ms:end_ms]
+
         # Głośność skalujemy logarytmicznie (w decybelach), bo ludzkie ucho postrzega dźwięk logarytmicznie.
         # Wzór: dB = 20 * log10(volume / 100). Dla volume=0 ustawiamy -120 dB (praktyczna cisza).
         dB_change = 20 * math.log10(volume / 100) if volume > 0 else -120
 
-        audio = self.audio + dB_change
+        audio = audio + dB_change
         channels = 1 if self.mono_radio.isChecked() else 2
         audio = audio.set_channels(channels)
         framerate = self.quality_combo.currentData()
